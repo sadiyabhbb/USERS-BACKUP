@@ -7,70 +7,88 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Enable CORS
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Serve all uploads
+// Serve uploads folder
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Multer dynamic folder storage
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const folder = req.body.path || '';
-    const uploadPath = path.join(__dirname, 'uploads', folder);
-    fs.mkdirSync(uploadPath, { recursive: true }); // ensure path exists
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
+// Ensure uploads folder exists
+if (!fs.existsSync('./uploads')) {
+  fs.mkdirSync('./uploads');
+}
+
+// Upload route with dynamic folder support
+app.post('/upload', (req, res, next) => {
+  const folder = req.query.path || req.body.path || '';
+
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      const targetPath = path.join(__dirname, 'uploads', folder);
+      fs.mkdirSync(targetPath, { recursive: true });
+      cb(null, targetPath);
+    },
+    filename: (req, file, cb) => {
+      const filename = Date.now() + '-' + file.originalname;
+      cb(null, filename);
+    }
+  });
+
+  const upload = multer({ storage }).single('file');
+
+  upload(req, res, function (err) {
+    if (err) return res.status(500).json({ error: 'Upload failed' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const relativePath = path.join(folder, req.file.filename).replace(/\\/g, '/');
+    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${encodeURIComponent(relativePath)}`;
+
+    res.json({
+      name: req.file.filename,
+      path: relativePath,
+      url: fileUrl
+    });
+  });
 });
-const upload = multer({ storage });
 
-// Upload with folder support
-app.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-  const relativePath = path.relative(path.join(__dirname, 'uploads'), req.file.path).replace(/\\/g, '/');
-  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${relativePath}`;
-  res.json({ url: fileUrl, path: relativePath });
-});
-
-// Recursively list all files with path
-function listFiles(dir = './uploads', fileList = [], base = '') {
-  const items = fs.readdirSync(dir);
-  items.forEach(item => {
-    const fullPath = path.join(dir, item);
-    const relPath = path.join(base, item).replace(/\\/g, '/');
-    if (fs.statSync(fullPath).isDirectory()) {
-      listFiles(fullPath, fileList, relPath);
+// List all files recursively
+const walk = (dir = '', fileList = []) => {
+  const files = fs.readdirSync(path.join(__dirname, 'uploads', dir));
+  files.forEach(file => {
+    const fullPath = path.join(dir, file);
+    const absPath = path.join(__dirname, 'uploads', fullPath);
+    const stat = fs.statSync(absPath);
+    if (stat.isDirectory()) {
+      walk(fullPath, fileList);
     } else {
       fileList.push({
-        name: item,
-        path: relPath,
-        url: `uploads/${relPath}`
+        name: file,
+        path: fullPath.replace(/\\/g, '/'),
+        url: `uploads/${encodeURIComponent(fullPath.replace(/\\/g, '/'))}`
       });
     }
   });
   return fileList;
-}
+};
 
-// GET all files (with folder info)
 app.get('/files', (req, res) => {
   try {
-    const files = listFiles();
-    res.json(files.map(file => ({
-      name: file.name,
-      path: file.path,
-      url: `${req.protocol}://${req.get('host')}/${file.url}`
-    })));
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to list files' });
+    const files = walk().map(f => ({
+      ...f,
+      url: `${req.protocol}://${req.get('host')}/${f.url}`
+    }));
+    res.json(files);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to read files' });
   }
 });
 
-// Delete file (with folder path)
+// Delete file by path
 app.delete('/delete', (req, res) => {
   const filePath = req.query.path;
-  if (!filePath) return res.status(400).json({ error: 'File path required' });
+  if (!filePath) return res.status(400).json({ error: 'Path is required' });
 
   const fullPath = path.join(__dirname, 'uploads', filePath);
   fs.unlink(fullPath, err => {
@@ -79,15 +97,15 @@ app.delete('/delete', (req, res) => {
   });
 });
 
-// Rename file (with folder support)
+// Rename file by full path
 app.post('/rename', (req, res) => {
   const { oldPath, newPath } = req.body;
-  if (!oldPath || !newPath) return res.status(400).json({ error: 'Both old and new paths required' });
+  if (!oldPath || !newPath) return res.status(400).json({ error: 'Old and new paths required' });
 
-  const oldFull = path.join(__dirname, 'uploads', oldPath);
-  const newFull = path.join(__dirname, 'uploads', newPath);
+  const from = path.join(__dirname, 'uploads', oldPath);
+  const to = path.join(__dirname, 'uploads', newPath);
 
-  fs.rename(oldFull, newFull, err => {
+  fs.rename(from, to, err => {
     if (err) return res.status(500).json({ error: 'Rename failed' });
     res.json({ success: true });
   });
@@ -98,6 +116,7 @@ app.get('/', (req, res) => {
   res.send('🚀 Drive Backup API with Folder Support is running.');
 });
 
+// Start server
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
