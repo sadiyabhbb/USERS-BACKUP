@@ -1,53 +1,77 @@
+// ✅ server.js (Backup Storage Server)
 const express = require('express');
 const multer = require('multer');
-const cors = require('cors');
 const fs = require('fs');
+const cors = require('cors');
 const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Middleware
 app.use(cors());
-app.use(express.static('uploads'));
 app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-const upload = multer({ dest: 'uploads/' });
+// Ensure uploads folder exists
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
-// File Upload Route
-app.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-  const tempPath = req.file.path;
-  const originalName = Date.now() + '_' + req.file.originalname;
-  const targetPath = path.join(__dirname, 'uploads', originalName);
-
-  fs.rename(tempPath, targetPath, err => {
-    if (err) return res.status(500).json({ error: 'Rename error' });
-
-    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${originalName}`;
-
-    // Save to data.json
-    let data = [];
-    try {
-      data = JSON.parse(fs.readFileSync('data.json'));
-    } catch (e) {}
-    data.push({ name: originalName, url: fileUrl, time: new Date().toISOString() });
-    fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
-
-    res.json({ message: 'Uploaded', url: fileUrl });
-  });
-});
-
-// Show all uploaded files
-app.get('/files', (req, res) => {
-  try {
-    const data = JSON.parse(fs.readFileSync('data.json'));
-    res.json(data);
-  } catch (e) {
-    res.json([]);
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}_${file.originalname}`;
+    cb(null, uniqueName);
   }
 });
 
+const upload = multer({ storage });
+
+// ✅ Root route fix
+app.get('/', (req, res) => {
+  res.send('✅ Backup Storage Server is running!');
+});
+
+// ✅ Upload route
+app.post('/upload', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+  const fileData = {
+    name: req.file.filename,
+    url: fileUrl,
+    time: new Date().toISOString()
+  };
+
+  const dataPath = 'data.json';
+  let existing = [];
+  if (fs.existsSync(dataPath)) {
+    existing = JSON.parse(fs.readFileSync(dataPath));
+  }
+  existing.push(fileData);
+  fs.writeFileSync(dataPath, JSON.stringify(existing, null, 2));
+
+  res.json({ url: fileUrl });
+});
+
+// ✅ List files route
+app.get('/files', (req, res) => {
+  const dataPath = 'data.json';
+  if (!fs.existsSync(dataPath)) return res.json([]);
+  const files = JSON.parse(fs.readFileSync(dataPath));
+  res.json(files);
+});
+
+// ✅ Serve uploaded files directly
+app.get('/uploads/:filename', (req, res) => {
+  const filePath = path.join(uploadDir, req.params.filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).send('❌ File not found in backup');
+  }
+  res.sendFile(filePath);
+});
+
+// Start server
 app.listen(port, () => {
-  console.log(`Storage server running at http://localhost:${port}`);
+  console.log(`🚀 Backup storage running on port ${port}`);
 });
