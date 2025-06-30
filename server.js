@@ -1,54 +1,79 @@
-// server.js
-const express = require('express');
-const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
-const cors = require('cors');
+const express = require("express");
+const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use('/uploads', express.static('uploads'));
+// Upload folder setup
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-
-// Multer storage setup
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
+  destination: function (req, file, cb) {
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueName = Date.now() + "_" + file.originalname;
+    cb(null, uniqueName);
+  },
 });
-const upload = multer({ storage });
+const upload = multer({ storage: storage });
 
-// Load or initialize data.json
-const dataFile = path.join(__dirname, 'data.json');
-if (!fs.existsSync(dataFile)) fs.writeFileSync(dataFile, '[]');
+// Middleware
+app.use(express.json());
+app.use("/uploads", express.static(uploadDir));
 
-// Routes
-app.get('/data', (req, res) => {
-  const data = JSON.parse(fs.readFileSync(dataFile));
-  res.json(data);
+// Default route
+app.get("/", (req, res) => {
+  res.send("✅ Drive Storage Backend is Running!");
 });
 
-app.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
+// Upload API
+app.post("/upload", upload.single("file"), (req, res) => {
   const fileData = {
     filename: req.file.filename,
-    url: `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`,
+    path: "/uploads/" + req.file.filename,
     uploadedAt: new Date().toISOString(),
   };
 
-  const data = JSON.parse(fs.readFileSync(dataFile));
+  const dataFile = path.join(__dirname, "data.json");
+  let data = [];
+
+  if (fs.existsSync(dataFile)) {
+    const jsonData = fs.readFileSync(dataFile, "utf-8");
+    try {
+      data = JSON.parse(jsonData);
+    } catch (e) {
+      data = [];
+    }
+  }
+
   data.push(fileData);
   fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
 
-  res.json({ success: true, file: fileData });
+  res.status(200).json({ message: "✅ File uploaded", file: fileData });
 });
 
-// Start server
-app.listen(PORT, () => console.log(`🚀 Storage backend running on port ${PORT}`));
+// Get uploaded files
+app.get("/data", (req, res) => {
+  const dataFile = path.join(__dirname, "data.json");
+  if (!fs.existsSync(dataFile)) {
+    return res.json([]);
+  }
+
+  const jsonData = fs.readFileSync(dataFile, "utf-8");
+  try {
+    const data = JSON.parse(jsonData);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: "❌ Failed to parse data.json" });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server is running on port ${PORT}`);
+});
