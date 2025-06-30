@@ -1,93 +1,82 @@
 const express = require('express');
 const multer = require('multer');
+const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const uploadDir = path.join(__dirname, 'uploads');
+const PORT = process.env.PORT || 3000;
 
-// Make sure uploads directory exists
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
-}
-
+// Enable CORS
+app.use(cors());
 app.use(express.json());
 
-// 🟢 Health check or root route (fixes "Cannot GET /")
-app.get('/', (req, res) => {
-  res.send('✅ Backup Storage Server is running!');
-});
+// Serve uploads folder
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ⚙️ Multer storage setup
+// Ensure uploads folder exists
+if (!fs.existsSync('./uploads')) {
+  fs.mkdirSync('./uploads');
+}
+
+// Multer setup
 const storage = multer.diskStorage({
-  destination: (_, __, cb) => cb(null, uploadDir),
-  filename: (_, file, cb) => cb(null, file.originalname)
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
 });
 const upload = multer({ storage });
 
-// 📤 Upload API
+// Upload route
 app.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: 'No file uploaded' });
-  }
-
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-  res.json({ success: true, url: fileUrl });
+  res.json({ url: fileUrl });
 });
 
-// 📄 Files list API
+// List all files
 app.get('/files', (req, res) => {
-  fs.readdir(uploadDir, (err, files) => {
-    if (err) return res.status(500).json([]);
-    const urls = files.map(name => ({
-      name,
-      url: `${req.protocol}://${req.get('host')}/uploads/${name}`
+  fs.readdir('./uploads', (err, files) => {
+    if (err) return res.status(500).json({ error: 'Failed to list files' });
+    const fileList = files.map(file => ({
+      name: file,
+      url: `${req.protocol}://${req.get('host')}/uploads/${file}`,
     }));
-    res.json(urls);
+    res.json(fileList);
   });
 });
 
-// ❌ Delete file API
+// Delete file
 app.delete('/delete', (req, res) => {
-  const fileName = req.query.name;
-  const filePath = path.join(uploadDir, fileName);
+  const name = req.query.name;
+  if (!name) return res.status(400).json({ error: 'File name required' });
 
-  if (!fileName || !fs.existsSync(filePath)) {
-    return res.status(404).json({ success: false, message: 'File not found' });
-  }
-
-  fs.unlink(filePath, (err) => {
-    if (err) return res.status(500).json({ success: false, message: 'Delete failed' });
-    res.json({ success: true, message: 'File deleted' });
+  const filePath = path.join(__dirname, 'uploads', name);
+  fs.unlink(filePath, err => {
+    if (err) return res.status(500).json({ error: 'Delete failed' });
+    res.json({ success: true });
   });
 });
 
-// ✏️ Rename file API
+// Rename file
 app.post('/rename', (req, res) => {
   const { oldName, newName } = req.body;
+  if (!oldName || !newName) return res.status(400).json({ error: 'Both old and new names required' });
 
-  if (!oldName || !newName) {
-    return res.status(400).json({ success: false, message: 'Missing file name(s)' });
-  }
+  const oldPath = path.join(__dirname, 'uploads', oldName);
+  const newPath = path.join(__dirname, 'uploads', newName);
 
-  const oldPath = path.join(uploadDir, oldName);
-  const newPath = path.join(uploadDir, newName);
-
-  if (!fs.existsSync(oldPath)) {
-    return res.status(404).json({ success: false, message: 'Old file not found' });
-  }
-
-  fs.rename(oldPath, newPath, (err) => {
-    if (err) return res.status(500).json({ success: false, message: 'Rename failed' });
-    res.json({ success: true, message: 'File renamed' });
+  fs.rename(oldPath, newPath, err => {
+    if (err) return res.status(500).json({ error: 'Rename failed' });
+    res.json({ success: true });
   });
 });
 
-// 📂 Serve uploaded files
-app.use('/uploads', express.static(uploadDir));
+// Default route
+app.get('/', (req, res) => {
+  res.send('🚀 Drive Backup API is running.');
+});
 
-// 🚀 Start server
-const PORT = process.env.PORT || 3000;
+// Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
+  console.log(`Server running at http://localhost:${PORT}`);
 });
