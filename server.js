@@ -1,4 +1,3 @@
-// ✅ server.js (Backup Storage Server)
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
@@ -29,12 +28,12 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// ✅ Root route fix
+// Root route
 app.get('/', (req, res) => {
   res.send('✅ Backup Storage Server is running!');
 });
 
-// ✅ Upload route
+// Upload route
 app.post('/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
@@ -60,7 +59,7 @@ app.post('/upload', upload.single('file'), (req, res) => {
   res.json({ url: fileUrl });
 });
 
-// ✅ List files route
+// List files route
 app.get('/files', (req, res) => {
   const dataPath = path.join(__dirname, 'data.json');
   if (!fs.existsSync(dataPath)) return res.json([]);
@@ -72,9 +71,9 @@ app.get('/files', (req, res) => {
   }
 });
 
-// ✅ Serve uploaded files directly
+// Serve uploaded files directly
 app.get('/uploads/:filename', (req, res) => {
-  const filename = path.basename(req.params.filename); // Prevent path traversal
+  const filename = path.basename(req.params.filename);
   const filePath = path.resolve(uploadDir, filename);
 
   fs.access(filePath, fs.constants.F_OK, (err) => {
@@ -84,8 +83,6 @@ app.get('/uploads/:filename', (req, res) => {
     }
     res.sendFile(filePath);
   });
-})
-  res.sendFile(filePath);
 });
 
 // Start server
