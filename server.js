@@ -6,22 +6,36 @@ const path = require('path');
 const app = express();
 const uploadDir = path.join(__dirname, 'uploads');
 
+// Make sure uploads directory exists
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+
 app.use(express.json());
 
-// Multer setup
+// 🟢 Health check or root route (fixes "Cannot GET /")
+app.get('/', (req, res) => {
+  res.send('✅ Backup Storage Server is running!');
+});
+
+// ⚙️ Multer storage setup
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, uploadDir),
   filename: (_, file, cb) => cb(null, file.originalname)
 });
 const upload = multer({ storage });
 
-// Upload route
+// 📤 Upload API
 app.post('/upload', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'No file uploaded' });
+  }
+
   const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-  res.json({ url: fileUrl });
+  res.json({ success: true, url: fileUrl });
 });
 
-// List files route
+// 📄 Files list API
 app.get('/files', (req, res) => {
   fs.readdir(uploadDir, (err, files) => {
     if (err) return res.status(500).json([]);
@@ -33,7 +47,7 @@ app.get('/files', (req, res) => {
   });
 });
 
-// Delete file route
+// ❌ Delete file API
 app.delete('/delete', (req, res) => {
   const fileName = req.query.name;
   const filePath = path.join(uploadDir, fileName);
@@ -48,7 +62,7 @@ app.delete('/delete', (req, res) => {
   });
 });
 
-// Rename file route
+// ✏️ Rename file API
 app.post('/rename', (req, res) => {
   const { oldName, newName } = req.body;
 
@@ -69,10 +83,10 @@ app.post('/rename', (req, res) => {
   });
 });
 
-// Serve static uploaded files
+// 📂 Serve uploaded files
 app.use('/uploads', express.static(uploadDir));
 
-// Start server
+// 🚀 Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
