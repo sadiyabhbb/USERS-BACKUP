@@ -1,91 +1,79 @@
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
-const cors = require('cors');
 const path = require('path');
 
 const app = express();
-const port = process.env.PORT || 3000;
+const uploadDir = path.join(__dirname, 'uploads');
 
-// Middleware
-app.use(cors());
 app.use(express.json());
 
-// Ensure uploads folder exists
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-
-// Static route to serve uploaded files
-app.use('/uploads', express.static(uploadDir));
-
+// Multer setup
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}_${file.originalname}`;
-    cb(null, uniqueName);
-  }
+  destination: (_, __, cb) => cb(null, uploadDir),
+  filename: (_, file, cb) => cb(null, file.originalname)
 });
-
 const upload = multer({ storage });
-
-// Root route
-app.get('/', (req, res) => {
-  res.send('✅ Backup Storage Server is running!');
-});
 
 // Upload route
 app.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
   const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-  const fileData = {
-    name: req.file.filename,
-    url: fileUrl,
-    time: new Date().toISOString()
-  };
-
-  const dataPath = path.join(__dirname, 'data.json');
-  let existing = [];
-  if (fs.existsSync(dataPath)) {
-    try {
-      existing = JSON.parse(fs.readFileSync(dataPath));
-    } catch (e) {
-      existing = [];
-    }
-  }
-  existing.push(fileData);
-  fs.writeFileSync(dataPath, JSON.stringify(existing, null, 2));
-
   res.json({ url: fileUrl });
 });
 
 // List files route
 app.get('/files', (req, res) => {
-  const dataPath = path.join(__dirname, 'data.json');
-  if (!fs.existsSync(dataPath)) return res.json([]);
-  try {
-    const files = JSON.parse(fs.readFileSync(dataPath));
-    res.json(files);
-  } catch (e) {
-    res.json([]);
-  }
-});
-
-// Serve uploaded files directly
-app.get('/uploads/:filename', (req, res) => {
-  const filename = path.basename(req.params.filename);
-  const filePath = path.resolve(uploadDir, filename);
-
-  fs.access(filePath, fs.constants.F_OK, (err) => {
-    if (err) {
-      console.error('❌ File not found:', filePath);
-      return res.status(404).send('❌ File not found in backup');
-    }
-    res.sendFile(filePath);
+  fs.readdir(uploadDir, (err, files) => {
+    if (err) return res.status(500).json([]);
+    const urls = files.map(name => ({
+      name,
+      url: `${req.protocol}://${req.get('host')}/uploads/${name}`
+    }));
+    res.json(urls);
   });
 });
 
+// Delete file route
+app.delete('/delete', (req, res) => {
+  const fileName = req.query.name;
+  const filePath = path.join(uploadDir, fileName);
+
+  if (!fileName || !fs.existsSync(filePath)) {
+    return res.status(404).json({ success: false, message: 'File not found' });
+  }
+
+  fs.unlink(filePath, (err) => {
+    if (err) return res.status(500).json({ success: false, message: 'Delete failed' });
+    res.json({ success: true, message: 'File deleted' });
+  });
+});
+
+// Rename file route
+app.post('/rename', (req, res) => {
+  const { oldName, newName } = req.body;
+
+  if (!oldName || !newName) {
+    return res.status(400).json({ success: false, message: 'Missing file name(s)' });
+  }
+
+  const oldPath = path.join(uploadDir, oldName);
+  const newPath = path.join(uploadDir, newName);
+
+  if (!fs.existsSync(oldPath)) {
+    return res.status(404).json({ success: false, message: 'Old file not found' });
+  }
+
+  fs.rename(oldPath, newPath, (err) => {
+    if (err) return res.status(500).json({ success: false, message: 'Rename failed' });
+    res.json({ success: true, message: 'File renamed' });
+  });
+});
+
+// Serve static uploaded files
+app.use('/uploads', express.static(uploadDir));
+
 // Start server
-app.listen(port, () => {
-  console.log(`🚀 Backup storage running on port ${port}`);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
