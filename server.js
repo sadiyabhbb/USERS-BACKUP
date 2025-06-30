@@ -11,14 +11,16 @@ const port = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Ensure uploads folder exists
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
+// Static route to serve uploaded files
+app.use('/uploads', express.static(uploadDir));
+
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
+  destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
     const uniqueName = `${Date.now()}_${file.originalname}`;
     cb(null, uniqueName);
@@ -43,10 +45,14 @@ app.post('/upload', upload.single('file'), (req, res) => {
     time: new Date().toISOString()
   };
 
-  const dataPath = 'data.json';
+  const dataPath = path.join(__dirname, 'data.json');
   let existing = [];
   if (fs.existsSync(dataPath)) {
-    existing = JSON.parse(fs.readFileSync(dataPath));
+    try {
+      existing = JSON.parse(fs.readFileSync(dataPath));
+    } catch (e) {
+      existing = [];
+    }
   }
   existing.push(fileData);
   fs.writeFileSync(dataPath, JSON.stringify(existing, null, 2));
@@ -56,18 +62,29 @@ app.post('/upload', upload.single('file'), (req, res) => {
 
 // ✅ List files route
 app.get('/files', (req, res) => {
-  const dataPath = 'data.json';
+  const dataPath = path.join(__dirname, 'data.json');
   if (!fs.existsSync(dataPath)) return res.json([]);
-  const files = JSON.parse(fs.readFileSync(dataPath));
-  res.json(files);
+  try {
+    const files = JSON.parse(fs.readFileSync(dataPath));
+    res.json(files);
+  } catch (e) {
+    res.json([]);
+  }
 });
 
 // ✅ Serve uploaded files directly
 app.get('/uploads/:filename', (req, res) => {
-  const filePath = path.join(uploadDir, req.params.filename);
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).send('❌ File not found in backup');
-  }
+  const filename = path.basename(req.params.filename); // Prevent path traversal
+  const filePath = path.resolve(uploadDir, filename);
+
+  fs.access(filePath, fs.constants.F_OK, (err) => {
+    if (err) {
+      console.error('❌ File not found:', filePath);
+      return res.status(404).send('❌ File not found in backup');
+    }
+    res.sendFile(filePath);
+  });
+})
   res.sendFile(filePath);
 });
 
