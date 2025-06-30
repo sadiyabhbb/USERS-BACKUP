@@ -1,63 +1,53 @@
 const express = require('express');
 const multer = require('multer');
+const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(express.static('uploads'));
+app.use(express.json());
 
-const uploadDir = path.join(__dirname, 'uploads');
-const dataFile = path.join(__dirname, 'data.json');
+const upload = multer({ dest: 'uploads/' });
 
-// Make sure uploads dir exists
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-
-// Multer config
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const name = Date.now() + '_' + file.originalname;
-    cb(null, name);
-  }
-});
-const upload = multer({ storage });
-
-// Upload route
+// File Upload Route
 app.post('/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  const fileUrl = `/uploads/${req.file.filename}`;
-  const fileEntry = {
-    url: fileUrl,
-    time: new Date().toISOString()
-  };
+  const tempPath = req.file.path;
+  const originalName = Date.now() + '_' + req.file.originalname;
+  const targetPath = path.join(__dirname, 'uploads', originalName);
 
-  let history = [];
-  if (fs.existsSync(dataFile)) {
-    history = JSON.parse(fs.readFileSync(dataFile, 'utf-8'));
+  fs.rename(tempPath, targetPath, err => {
+    if (err) return res.status(500).json({ error: 'Rename error' });
+
+    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${originalName}`;
+
+    // Save to data.json
+    let data = [];
+    try {
+      data = JSON.parse(fs.readFileSync('data.json'));
+    } catch (e) {}
+    data.push({ name: originalName, url: fileUrl, time: new Date().toISOString() });
+    fs.writeFileSync('data.json', JSON.stringify(data, null, 2));
+
+    res.json({ message: 'Uploaded', url: fileUrl });
+  });
+});
+
+// Show all uploaded files
+app.get('/files', (req, res) => {
+  try {
+    const data = JSON.parse(fs.readFileSync('data.json'));
+    res.json(data);
+  } catch (e) {
+    res.json([]);
   }
-  history.push(fileEntry);
-  fs.writeFileSync(dataFile, JSON.stringify(history, null, 2));
-
-  res.json({ message: '✅ File uploaded', url: fileUrl });
 });
 
-// History route
-app.get('/history', (req, res) => {
-  if (!fs.existsSync(dataFile)) return res.json([]);
-  const history = JSON.parse(fs.readFileSync(dataFile, 'utf-8'));
-  res.json(history);
-});
-
-// Default route
-app.get('/', (req, res) => {
-  res.send('✅ DRIVE MAIN STORAGE LIVE');
-});
-
-app.listen(PORT, () => {
-  console.log(`🚀 Backup Storage running on http://localhost:${PORT}`);
+app.listen(port, () => {
+  console.log(`Storage server running at http://localhost:${port}`);
 });
